@@ -1,0 +1,412 @@
+import { useEffect, useCallback, useState } from "react";
+import { useGameState, useAudio } from "./hooks";
+import { claudeService, hacktronService, elevenlabsService } from "./services";
+import { calculateGameConfig } from "./types";
+import type { Difficulty, DifficultyFactors, Language } from "./types";
+
+// Components
+import { HomePage } from "./components/HomePage/HomePage";
+import { DifficultySelect } from "./components/DifficultySelect/DifficultySelect";
+import { GameScreen } from "./components/GameScreen/GameScreen";
+import { EmergencyOverlay } from "./components/EmergencyOverlay/EmergencyOverlay";
+import { ReportModal } from "./components/ReportModal/ReportModal";
+import { LoadingOverlay } from "./components/LoadingOverlay/LoadingOverlay";
+//import { ScanLogOverlay } from "./components/ScanLogOverlay/ScanLogOverlay";
+import { AuditSplitScreen } from "./components/AuditSplitScreen/AuditSplitScreen";
+import { GameInfoModal } from "./components/GameInfoModal/GameInfoModal";
+
+import "./App.css";
+
+function App() {
+  const { state, currentTask, failedTasks, actions } = useGameState();
+  const audio = useAudio();
+  const [showEmergency, setShowEmergency] = useState(false);
+  const [showGameInfo, setShowGameInfo] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [tutorialMode, setTutorialMode] = useState(false);
+  const [endlessStage, setEndlessStage] = useState<Difficulty>('EASY');
+
+  // Timer effect
+  useEffect(() => {
+    if (state.phase !== "PLAYING") return;
+
+    const timer = setInterval(() => {
+      actions.tickTimer();
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [state.phase, actions]);
+
+  // Separate effect to handle timeout
+  useEffect(() => {
+    if (state.phase !== "PLAYING") return;
+
+    if (state.timeRemaining <= 0) {
+      audio.play("warning");
+      actions.timeUp();
+      setShowEmergency(true);
+    } else if (state.timeRemaining <= 5) {
+      // Play tick sound when time is low
+      audio.play("tick");
+    }
+  }, [state.phase, state.timeRemaining, actions, audio]);
+
+  // Handle difficulty selection and game start
+  const generateEndlessBatch = useCallback(
+    async (stage: Difficulty, factors: DifficultyFactors, language: Language) => {
+      const config = calculateGameConfig(stage, factors);
+      const result = await claudeService.generateSnippets({
+        language,
+        difficulty: stage,
+        complexityLevel: config.complexityLevel,
+        count: 5,
+      });
+      return result;
+    },
+    []
+  );
+
+  const handleStartGame = useCallback(
+    async (
+      difficulty: Difficulty,
+      factors: DifficultyFactors,
+      language: Language
+    ) => {
+      // Set difficulty and language
+      const startingDifficulty = state.endlessMode ? 'EASY' : difficulty;
+      actions.setDifficulty(startingDifficulty, factors);
+      actions.setLanguage(language);
+      actions.startLoading();
+
+      setIsGenerating(true);
+      const result = state.endlessMode
+        ? await generateEndlessBatch('EASY', factors, language)
+        : await claudeService.generateSnippets({
+            language,
+            difficulty,
+            complexityLevel: calculateGameConfig(difficulty, factors).complexityLevel,
+            count: calculateGameConfig(difficulty, factors).taskCount,
+          });
+
+      if (result.success) {
+        actions.loadTasks(result.data.tasks);
+        actions.startPlaying();
+        if (state.endlessMode) {
+          setEndlessStage('EASY');
+        }
+        audio.play("click");
+      } else {
+        console.error("Failed to generate snippets:", result.error);
+        // Show error state or retry
+        actions.resetGame();
+      }
+      setIsGenerating(false);
+    },
+    [actions, audio, generateEndlessBatch, state.endlessMode]
+  );
+
+  // Handle task answer
+  const handleAnswer = useCallback(
+    (answer: "safe" | "vulnerable") => {
+      if (!currentTask) return;
+
+      const isCorrect =
+        (answer === "vulnerable" && currentTask.isVulnerable) ||
+        (answer === "safe" && !currentTask.isVulnerable);
+
+      if (state.endlessMode && !isCorrect) {
+        audio.play("siren");
+        actions.answerTask(answer);
+        actions.gameOver("wrong_answer");
+        setShowEmergency(true);
+        return;
+      }
+
+      // Process answer
+      actions.answerTask(answer);
+
+      if (isCorrect) {
+        audio.play("success");
+      } else {
+        audio.play("warning");
+      }
+
+      const isLastTask = state.currentTaskIndex >= state.tasks.length - 1;
+      // Endless mode progression
+      if (state.endlessMode && isLastTask) {
+        const previousFailed = state.tasks.some(
+          (task, idx) => idx !== state.currentTaskIndex && task.status === "failed"
+        );
+        if (isCorrect && !previousFailed) {
+          const nextStage =
+            endlessStage === "EASY"
+              ? "MEDIUM"
+              : endlessStage === "MEDIUM"
+                ? "HARD"
+                : "HARD";
+          setEndlessStage(nextStage);
+          actions.startLoading();
+          setIsGenerating(true);
+          generateEndlessBatch(nextStage, state.difficultyFactors, state.language).then(
+            (result) => {
+              if (result.success) {
+                actions.loadTasks(result.data.tasks);
+                actions.startPlaying();
+              } else {
+                console.error("Failed to generate snippets:", result.error);
+                actions.resetGame();
+              }
+              setIsGenerating(false);
+            }
+          );
+          return;
+        }
+      }
+
+      // Check if game is complete
+      if (isLastTask) {
+        setShowEmergency(true);
+      }
+    },
+    [
+      currentTask,
+      actions,
+      audio,
+      state.currentTaskIndex,
+      state.tasks.length,
+      state.endlessMode,
+      state.tasks,
+      state.difficultyFactors,
+      state.language,
+      endlessStage,
+      generateEndlessBatch,
+    ]
+  );
+
+  // Handle continue from emergency overlay
+  const handleContinueFromEmergency = useCallback(async () => {
+    setShowEmergency(false);
+
+    // Start auditing
+    actions.startAuditing();
+
+    // Audit failed tasks
+    const tasksToAudit = state.endlessMode
+      ? state.tasks.filter((t) => t.status === "failed")
+      : state.tasks.filter(
+          (t) =>
+            t.status === "failed" || (t.isVulnerable && t.status !== "completed")
+        );
+
+    if (tasksToAudit.length > 0) {
+      const auditResult = await hacktronService.auditTasks({
+        tasks: tasksToAudit,
+        language: state.language,
+      });
+
+      if (auditResult.success) {
+        // Try to generate audio for the summary
+        const audioResult = await elevenlabsService.generateReportAudio(
+          auditResult.data.report.summary
+        );
+
+        actions.setAuditReport({
+          ...auditResult.data.report,
+          audioUrl: audioResult.success ? audioResult.data.audioUrl : undefined,
+        });
+      }
+    } else {
+      // No failed tasks, create empty report with audio
+      const perfectScoreSummary =
+        "Excellent work! All security checks passed successfully. Ship systems are secure.";
+
+      // Generate audio for perfect score too
+      const audioResult = await elevenlabsService.generateReportAudio(
+        perfectScoreSummary
+      );
+
+      actions.setAuditReport({
+        findings: [],
+        summary: perfectScoreSummary,
+        audioUrl: audioResult.success ? audioResult.data.audioUrl : undefined,
+      });
+    }
+
+    // Move to debrief
+    actions.startDebrief();
+  }, [actions, state.tasks, state.language]);
+
+  // Handle restart
+  const handleRestart = useCallback(() => {
+    audio.stopAll();
+    actions.resetGame();
+  }, [actions, audio]);
+
+  // Handle play button on home
+  const handlePlay = useCallback(() => {
+    audio.play("click");
+    actions.resetGame();
+    actions.startLoading();
+  }, [actions, audio]);
+
+  // Determine what to render based on game phase
+  const renderPhase = () => {
+    switch (state.phase) {
+      case "IDLE":
+        // Check if we should show difficulty select (after clicking play)
+        // We use a simple check: if we just clicked play, we want difficulty select
+        return (
+          <>
+            <HomePage
+              onPlay={handlePlay}
+              onShowInfo={() => setShowGameInfo(true)}
+              tutorialEnabled={tutorialMode}
+              onToggleTutorial={() => setTutorialMode((prev) => !prev)}
+            />
+            {showGameInfo && (
+              <GameInfoModal onClose={() => setShowGameInfo(false)} />
+            )}
+          </>
+        );
+
+      case "LOADING":
+        // If we're loading but have no tasks yet, show difficulty select
+        if (state.tasks.length === 0) {
+          if (state.endlessMode && isGenerating) {
+            return (
+              <LoadingOverlay
+                message="GENERATING MISSION..."
+                subtext="Claude is preparing the next batch"
+              />
+            );
+          }
+          return (
+            <>
+              <DifficultySelect
+                initialDifficulty={state.difficulty}
+                initialFactors={state.difficultyFactors}
+                initialLanguage={state.language}
+                endlessMode={state.endlessMode}
+                onToggleEndless={() => actions.setEndlessMode(!state.endlessMode)}
+                tutorialEnabled={tutorialMode}
+                onStart={handleStartGame}
+                onBack={handleRestart}
+              />
+              {isGenerating && (
+                <LoadingOverlay
+                  message="GENERATING MISSION..."
+                  subtext="Claude is preparing the code snippets"
+                />
+              )}
+              {showGameInfo && (
+                <GameInfoModal onClose={() => setShowGameInfo(false)} />
+              )}
+            </>
+          );
+        }
+        // Otherwise show loading in game screen
+        return (
+          <GameScreen
+            tasks={state.tasks}
+            currentTaskIndex={state.currentTaskIndex}
+            currentTask={null}
+            language={state.language}
+            timeRemaining={state.timeRemaining}
+            timePerTask={state.timePerTask}
+            onAnswer={handleAnswer}
+            disabled
+          />
+        );
+
+      case "PLAYING":
+        return (
+          <>
+            <GameScreen
+              tasks={state.tasks}
+              currentTaskIndex={state.currentTaskIndex}
+              currentTask={currentTask}
+              language={state.language}
+              timeRemaining={state.timeRemaining}
+              timePerTask={state.timePerTask}
+              onAnswer={handleAnswer}
+              showTutorial={tutorialMode}
+            />
+            {showEmergency && state.gameOverReason && (
+              <EmergencyOverlay
+                reason={state.gameOverReason}
+                onContinue={handleContinueFromEmergency}
+                score={state.score}
+                totalTasks={state.tasks.length}
+                correctAnswers={state.totalCorrect}
+              />
+            )}
+          </>
+        );
+
+      case "AUDITING":
+        return (
+          <>
+            <GameScreen
+              tasks={state.tasks}
+              currentTaskIndex={state.currentTaskIndex}
+              currentTask={currentTask}
+              language={state.language}
+              timeRemaining={0}
+              timePerTask={state.timePerTask}
+              onAnswer={handleAnswer}
+              disabled
+              showTutorial={tutorialMode}
+            />
+            {!state.auditReport && (
+              <AuditSplitScreen
+                active={!state.auditReport}
+                findingsCount={state.tasks.filter((t) => t.isVulnerable).length}
+              />
+            )}
+            {showGameInfo && (
+              <GameInfoModal onClose={() => setShowGameInfo(false)} />
+            )}
+            {showEmergency && state.gameOverReason && (
+              <EmergencyOverlay
+                reason={state.gameOverReason}
+                onContinue={handleContinueFromEmergency}
+                score={state.score}
+                totalTasks={state.tasks.length}
+                correctAnswers={state.totalCorrect}
+              />
+            )}
+          </>
+        );
+
+      case "DEBRIEF":
+        return (
+          <ReportModal
+            report={state.auditReport || null}
+            failedTasks={failedTasks}
+            allTasks={state.tasks}
+            onRestart={handleRestart}
+            audioUrl={state.auditReport?.audioUrl}
+          />
+        );
+
+      default:
+        return (
+          <>
+            <HomePage
+              onPlay={handlePlay}
+              onShowInfo={() => setShowGameInfo(true)}
+              tutorialEnabled={tutorialMode}
+              onToggleTutorial={() => setTutorialMode((prev) => !prev)}
+            />
+            {showGameInfo && (
+              <GameInfoModal onClose={() => setShowGameInfo(false)} />
+            )}
+          </>
+        );
+    }
+  };
+
+  return <div className="app">{renderPhase()}</div>;
+}
+
+export default App;
