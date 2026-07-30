@@ -102,7 +102,17 @@ class TestSummarizeFindings:
         assert "2 CRITICAL issues" in summary
         assert "1 HIGH severity issue" in summary
 
-    def test_singular_critical_is_not_pluralised(self, make_frontend_task):
+    def test_singular_critical_agrees_in_number(self, make_frontend_task):
         findings = build_findings([make_frontend_task("t1", vulnerability_type="RCE")])
 
-        assert "1 CRITICAL issue " in summarize_findings(findings)
+        assert "1 CRITICAL issue requires immediate attention." in summarize_findings(findings)
+
+    def test_plural_critical_agrees_in_number(self, make_frontend_task):
+        findings = build_findings(
+            [
+                make_frontend_task("t1", vulnerability_type="RCE"),
+                make_frontend_task("t2", vulnerability_type="SQL_INJECTION"),
+            ]
+        )
+
+        assert "2 CRITICAL issues require immediate attention." in summarize_findings(findings)
