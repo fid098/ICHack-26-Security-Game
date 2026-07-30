@@ -70,7 +70,7 @@ export function ReportModal({
     try {
       const result = await elevenlabsService.generateReportAudio(report.summary);
 
-      if (result.success && result.data) {
+      if (result.success) {
         const generatedAudioUrl = result.data.audioUrl;
         setAudioUrl(generatedAudioUrl);
         // Auto-play the generated audio
@@ -92,7 +92,7 @@ export function ReportModal({
         }
       } else {
         // Show the actual error message from the API
-        const errorMsg = result.error?.message || 'Voice generation service unavailable';
+        const errorMsg = result.error.message || 'Voice generation service unavailable';
         setAudioError(errorMsg);
         console.error('TTS generation failed:', errorMsg);
       }
