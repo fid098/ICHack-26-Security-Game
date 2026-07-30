@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -86,9 +86,9 @@ class TaskSchema(BaseModel):
     is_vulnerable: bool
     vulnerability_type: VulnType
     difficulty: Difficulty
-    language: Optional[str] = None
-    vulnerability_line: Optional[int] = None
-    hints: Optional[List[str]] = None
+    language: str | None = None
+    vulnerability_line: int | None = None
+    hints: list[str] | None = None
 
 
 class TaskPublicSchema(BaseModel):
@@ -96,8 +96,8 @@ class TaskPublicSchema(BaseModel):
     system_name: str
     code: str
     difficulty: Difficulty
-    language: Optional[str] = None
-    hints: Optional[List[str]] = None
+    language: str | None = None
+    hints: list[str] | None = None
 
 
 class SessionCreateRequest(BaseModel):
@@ -114,7 +114,7 @@ class SessionCreateResponse(BaseModel):
 #response model for listing tasks in a session
 class TaskListResponse(BaseModel):
     session_id: str
-    tasks: List[TaskPublicSchema]
+    tasks: list[TaskPublicSchema]
 
 #schema for each answer submitted by user
 class AnswerSchema(BaseModel):
@@ -123,19 +123,19 @@ class AnswerSchema(BaseModel):
 
 #request model for submitting answers
 class SubmitAnswersRequest(BaseModel):
-    answers: List[AnswerSchema]
+    answers: list[AnswerSchema]
 
 #final response after submitting answers
 class SubmitAnswersResponse(BaseModel):
     correct: int
     incorrect: int
-    missed_task_ids: List[str]
+    missed_task_ids: list[str]
 
 #audit log from hacktron 
 class AuditLogSchema(BaseModel):
     task_id: str
     raw_log: str
-    findings: Optional[List[str]] = None
+    findings: list[str] | None = None
 
 # Mentor report schema from claude 
 class MentorReportSchema(BaseModel):
@@ -145,8 +145,8 @@ class MentorReportSchema(BaseModel):
 class FinishResponse(BaseModel):
     session_id: str
     score: int
-    missed_task_ids: List[str]
-    audit_logs: List[AuditLogSchema]
+    missed_task_ids: list[str]
+    audit_logs: list[AuditLogSchema]
     mentor_report: MentorReportSchema
 
 # Request and Response models for Frontend Task Generation and Auditing
@@ -164,15 +164,15 @@ class FrontendTask(BaseModel):
     language: FrontendLanguage
     isVulnerable: bool
     vulnerabilityType: FrontendVulnType
-    vulnerabilityLine: Optional[int] = None
+    vulnerabilityLine: int | None = None
     status: FrontendTaskStatus = "pending"
-    explanation: Optional[str] = None
-    hints: Optional[List[str]] = None
+    explanation: str | None = None
+    hints: list[str] | None = None
 
 # response model for generated snippets
 class GenerateSnippetsResponse(BaseModel):
-    tasks: List[FrontendTask]
-    error: Optional[str] = None
+    tasks: list[FrontendTask]
+    error: str | None = None
 
 # model for each audit finding
 class AuditFinding(BaseModel):
@@ -183,32 +183,32 @@ class AuditFinding(BaseModel):
     description: str
     codeLocation: dict
     remediation: str
-    codeSnippet: Optional[str] = None
+    codeSnippet: str | None = None
 
 # model for the complete audit report
 class AuditReport(BaseModel):
-    findings: List[AuditFinding]
+    findings: list[AuditFinding]
     summary: str
-    audioUrl: Optional[str] = None
+    audioUrl: str | None = None
 
 # request model for auditing tasks
 class AuditRequest(BaseModel):
-    tasks: List[FrontendTask]
+    tasks: list[FrontendTask]
     language: FrontendLanguage
 
 # response model for audit report
 class AuditResponse(BaseModel):
     report: AuditReport
-    error: Optional[str] = None
+    error: str | None = None
 
 # Request and Response models for Text-to-Speech (TTS) Integration
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=5000, description="Text to convert to speech (max 5000 chars)")
-    voiceId: Optional[str] = Field(None, max_length=100, description="Voice ID or preset name")
-    voiceSettings: Optional[dict] = None
+    voiceId: str | None = Field(None, max_length=100, description="Voice ID or preset name")
+    voiceSettings: dict | None = None
 
 # Response model for TTS output
 class TTSResponse(BaseModel):
     audioUrl: str
-    duration: Optional[float] = None
-    error: Optional[str] = None
+    duration: float | None = None
+    error: str | None = None

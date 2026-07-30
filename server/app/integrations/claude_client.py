@@ -4,7 +4,6 @@ import json
 import os
 import re
 from itertools import cycle
-from typing import List, Optional
 from uuid import uuid4
 
 import httpx
@@ -13,13 +12,12 @@ from pydantic import BaseModel, ValidationError
 from ..schemas import (
     FrontendDifficulty,
     FrontendLanguage,
+    FrontendSystemName,
     FrontendTask,
     FrontendVulnType,
-    FrontendSystemName,
 )
 
-
-SYSTEM_NAMES: List[FrontendSystemName] = [
+SYSTEM_NAMES: list[FrontendSystemName] = [
     "O2",
     "NAVIGATION",
     "SHIELDS",
@@ -37,13 +35,13 @@ class ClaudeTaskItem(BaseModel):
     code: str
     isVulnerable: bool
     vulnerabilityType: FrontendVulnType
-    systemName: Optional[FrontendSystemName] = None
-    vulnerabilityLine: Optional[int] = None
-    hints: Optional[List[str]] = None
+    systemName: FrontendSystemName | None = None
+    vulnerabilityLine: int | None = None
+    hints: list[str] | None = None
 
 
 class ClaudeTaskPayload(BaseModel):
-    tasks: List[ClaudeTaskItem]
+    tasks: list[ClaudeTaskItem]
 
 
 def generate_frontend_tasks(
@@ -52,7 +50,7 @@ def generate_frontend_tasks(
     complexity_level: str,
     count: int,
     vuln_density: float,
-) -> List[FrontendTask]:
+) -> list[FrontendTask]:
     payload = _request_tasks_from_claude(
         language=language,
         difficulty=difficulty,
@@ -62,7 +60,7 @@ def generate_frontend_tasks(
     )
 
     validated = _validate_tasks_payload(payload, count, vuln_density)
-    tasks: List[FrontendTask] = []
+    tasks: list[FrontendTask] = []
     system_cycle = cycle(SYSTEM_NAMES)
 
     for task in validated.tasks:
@@ -85,11 +83,14 @@ def generate_frontend_tasks(
 
 
 def generate_security_mentor_summary(
-    hacktron_logs: List[str],
-    failed_task_summaries: List[str],
+    hacktron_logs: list[str],
+    failed_task_summaries: list[str],
 ) -> str:
     if not failed_task_summaries:
-        return "No vulnerabilities were missed in this run. Systems remained secure and no exploitable patterns were detected."
+        return (
+            "No vulnerabilities were missed in this run. Systems remained secure "
+            "and no exploitable patterns were detected."
+        )
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is not configured.")

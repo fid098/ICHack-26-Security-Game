@@ -1,0 +1,16 @@
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # import sorting
+    "B",   # bugbear
+    "UP",  # pyupgrade
+    "C4",  # comprehensions
+]
+
+[lint.per-file-ignores]
+# Benchmarks patch module globals before importing, so imports are not top-level.
+"benchmarks/*" = ["E402"]
