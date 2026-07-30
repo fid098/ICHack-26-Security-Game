@@ -2,15 +2,18 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
+from .integrations.claude_client import generate_frontend_tasks, generate_security_mentor_summary
+from .integrations.elevenlabs import generate_speech, validate_api_key
+from .integrations.hacktron import scan_with_hacktron
+from .integrations.reporting import build_findings, summarize_findings
 from .schemas import (
     DIFFICULTY_CONFIGS,
-    AuditRequest,
     AuditReport,
+    AuditRequest,
     AuditResponse,
     FinishResponse,
     GenerateSnippetsRequest,
@@ -24,10 +27,6 @@ from .schemas import (
     TTSResponse,
 )
 from .store import InMemoryStore
-from .integrations.claude_client import generate_frontend_tasks, generate_security_mentor_summary
-from .integrations.hacktron import scan_with_hacktron
-from .integrations.reporting import build_findings, summarize_findings
-from .integrations.elevenlabs import generate_speech, validate_api_key
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
 app = FastAPI(title="Security Sabotage API")

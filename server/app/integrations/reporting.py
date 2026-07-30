@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from typing import Dict, List
-
 from ..schemas import AuditFinding, FrontendTask, FrontendVulnType
 
-
-VULNERABILITY_METADATA: Dict[FrontendVulnType, Dict[str, str]] = {
+VULNERABILITY_METADATA: dict[FrontendVulnType, dict[str, str]] = {
     "XSS": {
         "severity": "HIGH",
         "description": "User input is rendered without proper escaping.",
@@ -49,8 +46,8 @@ VULNERABILITY_METADATA: Dict[FrontendVulnType, Dict[str, str]] = {
 }
 
 
-def build_findings(tasks: List[FrontendTask]) -> List[AuditFinding]:
-    findings: List[AuditFinding] = []
+def build_findings(tasks: list[FrontendTask]) -> list[AuditFinding]:
+    findings: list[AuditFinding] = []
     for task in tasks:
         if not task.isVulnerable:
             continue
@@ -73,7 +70,7 @@ def build_findings(tasks: List[FrontendTask]) -> List[AuditFinding]:
     return findings
 
 
-def summarize_findings(findings: List[AuditFinding]) -> str:
+def summarize_findings(findings: list[AuditFinding]) -> str:
     if not findings:
         return "Security scan complete. No vulnerabilities detected."
 
@@ -84,7 +81,9 @@ def summarize_findings(findings: List[AuditFinding]) -> str:
     parts = [f"Security scan detected {total} vulnerabilit{'y' if total == 1 else 'ies'}."]
 
     if critical:
-        parts.append(f"{critical} CRITICAL issue{'s' if critical != 1 else ''} require immediate attention.")
+        noun = "issue" if critical == 1 else "issues"
+        verb = "requires" if critical == 1 else "require"
+        parts.append(f"{critical} CRITICAL {noun} {verb} immediate attention.")
     if high:
         parts.append(f"{high} HIGH severity issue{'s' if high != 1 else ''} should be addressed promptly.")
 

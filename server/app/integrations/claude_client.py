@@ -4,7 +4,6 @@ import json
 import os
 import re
 from itertools import cycle
-from typing import List, Optional
 from uuid import uuid4
 
 import httpx
@@ -13,13 +12,12 @@ from pydantic import BaseModel, ValidationError
 from ..schemas import (
     FrontendDifficulty,
     FrontendLanguage,
+    FrontendSystemName,
     FrontendTask,
     FrontendVulnType,
-    FrontendSystemName,
 )
 
-
-SYSTEM_NAMES: List[FrontendSystemName] = [
+SYSTEM_NAMES: list[FrontendSystemName] = [
     "O2",
     "NAVIGATION",
     "SHIELDS",
@@ -37,12 +35,13 @@ class ClaudeTaskItem(BaseModel):
     code: str
     isVulnerable: bool
     vulnerabilityType: FrontendVulnType
-    systemName: Optional[FrontendSystemName] = None
-    vulnerabilityLine: Optional[int] = None
+    systemName: FrontendSystemName | None = None
+    vulnerabilityLine: int | None = None
+    hints: list[str] | None = None
 
 
 class ClaudeTaskPayload(BaseModel):
-    tasks: List[ClaudeTaskItem]
+    tasks: list[ClaudeTaskItem]
 
 
 def generate_frontend_tasks(
@@ -51,7 +50,7 @@ def generate_frontend_tasks(
     complexity_level: str,
     count: int,
     vuln_density: float,
-) -> List[FrontendTask]:
+) -> list[FrontendTask]:
     payload = _request_tasks_from_claude(
         language=language,
         difficulty=difficulty,
@@ -61,7 +60,7 @@ def generate_frontend_tasks(
     )
 
     validated = _validate_tasks_payload(payload, count, vuln_density)
-    tasks: List[FrontendTask] = []
+    tasks: list[FrontendTask] = []
     system_cycle = cycle(SYSTEM_NAMES)
 
     for task in validated.tasks:
@@ -75,6 +74,7 @@ def generate_frontend_tasks(
                 isVulnerable=task.isVulnerable,
                 vulnerabilityType=_normalize_vuln_type(task.isVulnerable, task.vulnerabilityType),
                 vulnerabilityLine=task.vulnerabilityLine,
+                hints=task.hints,
                 status="pending",
             )
         )
@@ -83,9 +83,14 @@ def generate_frontend_tasks(
 
 
 def generate_security_mentor_summary(
-    hacktron_logs: List[str],
-    failed_task_summaries: List[str],
+    hacktron_logs: list[str],
+    failed_task_summaries: list[str],
 ) -> str:
+    if not failed_task_summaries:
+        return (
+            "No vulnerabilities were missed in this run. Systems remained secure "
+            "and no exploitable patterns were detected."
+        )
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is not configured.")
@@ -143,7 +148,8 @@ def _request_tasks_from_claude(
         "vulnerabilityType (one of XSS, SQL_INJECTION, SSRF, RCE, PATH_TRAVERSAL, "
         "COMMAND_INJECTION, INSECURE_DESERIALIZATION, SAFE), "
         "systemName (one of O2, NAVIGATION, SHIELDS, REACTOR, COMMUNICATIONS, "
-        "ELECTRICAL, MEDBAY, SECURITY, WEAPONS, ADMIN), and vulnerabilityLine (number). "
+        "ELECTRICAL, MEDBAY, SECURITY, WEAPONS, ADMIN), vulnerabilityLine (number), "
+        "and hints (array of exactly 2 short hints). "
         "No markdown, only JSON."
     )
 
@@ -215,6 +221,11 @@ def _parse_json_payload(text: str) -> ClaudeTaskPayload:
 
     if isinstance(raw, list):
         raw = {"tasks": raw}
+    elif isinstance(raw, dict) and "tasks" not in raw and "snippets" in raw:
+        raw = {"tasks": raw.get("snippets", [])}
+
+    if isinstance(raw, dict) and "tasks" in raw:
+        raw["tasks"] = [_normalize_task_item(item) for item in raw["tasks"]]
 
     try:
         return ClaudeTaskPayload.model_validate(raw)
@@ -250,10 +261,54 @@ def _normalize_vuln_type(is_vulnerable: bool, vuln_type: FrontendVulnType) -> Fr
 
 
 def _extract_json(text: str) -> str:
-    match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
-    if not match:
-        raise ValueError("Claude response did not contain JSON.")
-    return match.group(1)
+    # Extract the first complete JSON object/array using bracket matching.
+    start = None
+    stack = []
+    for idx, char in enumerate(text):
+        if char in "{[":
+            if start is None:
+                start = idx
+            stack.append(char)
+        elif char in "}]":
+            if not stack:
+                continue
+            opening = stack.pop()
+            if (opening == "{" and char != "}") or (opening == "[" and char != "]"):
+                continue
+            if not stack and start is not None:
+                return text[start:idx + 1]
+    raise ValueError("Claude response did not contain valid JSON.")
+
+#for hints and field normalization
+def _normalize_task_item(item: object) -> dict:
+    if not isinstance(item, dict):
+        return {}
+
+    normalized = dict(item)
+    is_vulnerable = normalized.get("isVulnerable")
+    if "isVulnerable" not in normalized and "vulnerable" in normalized:
+        normalized["isVulnerable"] = normalized["vulnerable"]
+        is_vulnerable = normalized["isVulnerable"]
+
+    if "vulnerabilityType" not in normalized:
+        if "type" in normalized:
+            normalized["vulnerabilityType"] = normalized["type"]
+        elif "vulnerability" in normalized:
+            normalized["vulnerabilityType"] = normalized["vulnerability"]
+        elif is_vulnerable is False:
+            normalized["vulnerabilityType"] = "SAFE"
+        elif is_vulnerable is True:
+            normalized["vulnerabilityType"] = "XSS"
+
+    hints = normalized.get("hints")
+    if hints is None:
+        normalized["hints"] = []
+    elif not isinstance(hints, list):
+        normalized["hints"] = [str(hints)]
+    else:
+        normalized["hints"] = [str(hint) for hint in hints][:2]
+
+    return normalized
 
 
 def _strip_heading_marks(text: str) -> str:

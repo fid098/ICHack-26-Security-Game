@@ -1,0 +1,37 @@
+services:
+  server:
+    build: ./server
+    ports:
+      - "8000:8000"
+    environment:
+      # Every provider is optional: unset keys degrade that feature rather than
+      # breaking the app. See README "Running without API keys".
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
+      ANTHROPIC_VERSION: ${ANTHROPIC_VERSION:-2023-06-01}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:8080}
+      # Left unset by default: the CLI is not present in the image.
+      HACKTRON_CMD: ${HACKTRON_CMD:-}
+      HACKTRON_ARGS: ${HACKTRON_ARGS:-}
+      HACKTRON_MAX_WORKERS: ${HACKTRON_MAX_WORKERS:-4}
+      HACKTRON_TIMEOUT: ${HACKTRON_TIMEOUT:-30}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ./client
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "8080:80"
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped

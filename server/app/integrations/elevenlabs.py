@@ -1,14 +1,12 @@
 """
 ElevenLabs Text-to-Speech Integration
 """
-import os
 import base64
+import os
 from pathlib import Path
-from typing import Optional
 
 import httpx
 from dotenv import load_dotenv
-
 
 ELEVENLABS_API_URL = "https://api.elevenlabs.io/v1"
 
@@ -53,7 +51,7 @@ def validate_api_key() -> tuple[bool, str]:
         return False, f"Validation error: {str(exc)}"
 
 
-def generate_speech(text: str, voice_id: Optional[str] = None) -> tuple[str, float]:
+def generate_speech(text: str, voice_id: str | None = None) -> tuple[str, float]:
     """
     Generate speech using ElevenLabs API.
 
@@ -118,7 +116,9 @@ def generate_speech(text: str, voice_id: Optional[str] = None) -> tuple[str, flo
         # Provide more specific error messages based on status code
         status_code = exc.response.status_code
         if status_code == 401:
-            raise RuntimeError("ElevenLabs API key is invalid or expired. Please check your ELEVENLABS_API_KEY.") from exc
+            raise RuntimeError(
+                "ElevenLabs API key is invalid or expired. Please check your ELEVENLABS_API_KEY."
+            ) from exc
         elif status_code == 429:
             raise RuntimeError("ElevenLabs API rate limit exceeded. Please try again later.") from exc
         elif status_code == 403:
@@ -131,7 +131,7 @@ def generate_speech(text: str, voice_id: Optional[str] = None) -> tuple[str, flo
         raise RuntimeError(f"Unexpected error generating speech: {str(exc)}") from exc
 
 
-def _get_api_key() -> Optional[str]:
+def _get_api_key() -> str | None:
     api_key = os.getenv("ELEVENLABS_API_KEY")
     if api_key:
         return api_key

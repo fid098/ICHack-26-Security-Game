@@ -1,26 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Dict, List, Optional
+from datetime import UTC, datetime
 from uuid import uuid4
 
+from .integrations.claude_client import generate_frontend_tasks, generate_security_mentor_summary
+from .integrations.hacktron import scan_with_hacktron
 from .schemas import (
     DIFFICULTY_CONFIGS,
     AnswerSchema,
     AuditLogSchema,
     Difficulty,
+    FinishResponse,
     FrontendDifficulty,
     FrontendTask,
-    FinishResponse,
     MentorReportSchema,
     SubmitAnswersResponse,
     TaskPublicSchema,
     TaskSchema,
 )
-from .integrations.claude_client import generate_frontend_tasks, generate_security_mentor_summary
-from .integrations.hacktron import scan_with_hacktron
-
 
 
 @dataclass
@@ -28,20 +26,20 @@ class SessionData:
     session_id: str
     difficulty: Difficulty
     created_at: datetime
-    tasks: List[TaskSchema]
-    answers: Dict[str, AnswerSchema] = field(default_factory=dict)
-    audit_logs: List[AuditLogSchema] = field(default_factory=list)
-    mentor_report: Optional[MentorReportSchema] = None
+    tasks: list[TaskSchema]
+    answers: dict[str, AnswerSchema] = field(default_factory=dict)
+    audit_logs: list[AuditLogSchema] = field(default_factory=list)
+    mentor_report: MentorReportSchema | None = None
 
 
 class InMemoryStore:
     def __init__(self) -> None:
-        self.sessions: Dict[str, SessionData] = {}
+        self.sessions: dict[str, SessionData] = {}
 
     # Create a new session with generated tasks
     def create_session(self, difficulty: Difficulty, task_count: int) -> SessionData:
         session_id = uuid4().hex
-        created_at = datetime.utcnow()
+        created_at = datetime.now(UTC)
         tasks = generate_tasks(difficulty, task_count)
         session = SessionData(
             session_id=session_id,
@@ -59,7 +57,7 @@ class InMemoryStore:
             raise KeyError(f"Unknown session: {session_id}")
         return session
 
-    def list_public_tasks(self, session_id: str) -> List[TaskPublicSchema]:
+    def list_public_tasks(self, session_id: str) -> list[TaskPublicSchema]:
         session = self.get_session(session_id)
         return [
             TaskPublicSchema(
@@ -68,21 +66,26 @@ class InMemoryStore:
                 code=task.code,
                 difficulty=task.difficulty,
                 language=task.language,
+                hints=task.hints,
             )
             for task in session.tasks
         ]
 
-    def submit_answers(self, session_id: str, answers: List[AnswerSchema]) -> SubmitAnswersResponse:
+    def submit_answers(self, session_id: str, answers: list[AnswerSchema]) -> SubmitAnswersResponse:
         session = self.get_session(session_id)
         valid_ids = {task.id for task in session.tasks}
         seen = set()
 
+        # Validate the whole batch before writing any of it, so a bad id part way
+        # through cannot leave the session holding a partially applied submission.
         for answer in answers:
             if answer.task_id not in valid_ids:
                 raise ValueError(f"Unknown task id: {answer.task_id}")
             if answer.task_id in seen:
                 raise ValueError(f"Duplicate answer for task id: {answer.task_id}")
             seen.add(answer.task_id)
+
+        for answer in answers:
             session.answers[answer.task_id] = answer
 
         correct, _, missed_task_ids = score_session(session)
@@ -108,7 +111,7 @@ class InMemoryStore:
         if session.mentor_report is None:
             try:
                 session.mentor_report = build_mentor_report(session, missed_task_ids)
-            except Exception as exc:
+            except Exception:
                 session.mentor_report = build_fallback_mentor_report(missed_task_ids)
 
         return FinishResponse(
@@ -135,7 +138,7 @@ class InMemoryStore:
         )
 
 # Generate tasks based on difficulty and count
-def generate_tasks(difficulty: Difficulty, task_count: int, language: str = "javascript") -> List[TaskSchema]:
+def generate_tasks(difficulty: Difficulty, task_count: int, language: str = "javascript") -> list[TaskSchema]:
     config = DIFFICULTY_CONFIGS[difficulty]
     frontend_tasks = generate_frontend_tasks(
         language=language,
@@ -146,9 +149,9 @@ def generate_tasks(difficulty: Difficulty, task_count: int, language: str = "jav
     )
     return [_to_task_schema(task, difficulty) for task in frontend_tasks]
 
-def score_session(session: SessionData) -> tuple[int, int, List[str]]:
+def score_session(session: SessionData) -> tuple[int, int, list[str]]:
     correct = 0
-    missed: List[str] = []
+    missed: list[str] = []
 
     for task in session.tasks:
         answer = session.answers.get(task.id)
@@ -166,7 +169,7 @@ def score_session(session: SessionData) -> tuple[int, int, List[str]]:
     return correct, incorrect, missed
 
 # Build audit logs using Hacktron for missed tasks
-def build_hacktron_audit_logs(session: SessionData, missed_task_ids: List[str]) -> List[AuditLogSchema]:
+def build_hacktron_audit_logs(session: SessionData, missed_task_ids: list[str]) -> list[AuditLogSchema]:
     if not missed_task_ids:
         return []
     missed_tasks = [task for task in session.tasks if task.id in missed_task_ids]
@@ -178,7 +181,7 @@ def build_hacktron_audit_logs(session: SessionData, missed_task_ids: List[str]) 
     ]
 
 # Build mentor report using Claude based on audit logs and missed tasks
-def build_mentor_report(session: SessionData, missed_task_ids: List[str]) -> MentorReportSchema:
+def build_mentor_report(session: SessionData, missed_task_ids: list[str]) -> MentorReportSchema:
     failed_tasks = [task for task in session.tasks if task.id in missed_task_ids]
     failed_summaries = [
         f"{task.system_name}: {task.vulnerability_type} in {task.language or 'javascript'}"
@@ -189,7 +192,7 @@ def build_mentor_report(session: SessionData, missed_task_ids: List[str]) -> Men
     return MentorReportSchema(summary=summary)
 
 # Fallback mentor report if Claude integration fails
-def build_fallback_mentor_report(missed_task_ids: List[str]) -> MentorReportSchema:
+def build_fallback_mentor_report(missed_task_ids: list[str]) -> MentorReportSchema:
     if not missed_task_ids:
         summary = "Clean sweep. No missed vulnerabilities detected in this run."
     else:
@@ -218,6 +221,7 @@ def _to_task_schema(frontend_task: FrontendTask, difficulty: Difficulty) -> Task
         difficulty=difficulty,
         language=frontend_task.language,
         vulnerability_line=frontend_task.vulnerabilityLine,
+        hints=frontend_task.hints,
     )
 
 # Normalize vulnerability type based on whether the task is vulnerable
