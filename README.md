@@ -1,6 +1,6 @@
 # Security Detection Game
 
-[![CI](https://github.com/D1K03/security-detection-game/actions/workflows/ci.yml/badge.svg)](https://github.com/D1K03/security-detection-game/actions/workflows/ci.yml)
+[![CI](https://github.com/fid098/AI_Security_Audit_Game/actions/workflows/ci.yml/badge.svg)](https://github.com/fid098/AI_Security_Audit_Game/actions/workflows/ci.yml)
 
 An Among-Us-inspired security training game. Players inspect short code snippets,
 label them as SAFE or VULNERABLE, and receive a post-game audit powered by
